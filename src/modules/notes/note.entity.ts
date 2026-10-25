@@ -1,50 +1,56 @@
 import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-  ManyToOne,
-  OneToMany,
-  Index,
-} from 'typeorm';
-import { User } from '../users/user.entity';
+	Entity,
+	PrimaryGeneratedColumn,
+	Column,
+	CreateDateColumn,
+	UpdateDateColumn,
+	ManyToOne,
+	OneToMany,
+	Index,
+} from "typeorm";
+import { User } from "../users/user.entity";
 
-@Entity('notes')
+@Entity("notes")
 export class Note {
-  @PrimaryGeneratedColumn()
-  id: number;
+	@PrimaryGeneratedColumn()
+	id: number;
 
-  @Column()
-  userId: string;
+	@Column()
+	userId: string;
 
-  @ManyToOne(() => User, (user) => user.notes, { onDelete: 'CASCADE' })
-  @Index()
-  user: User;
+	@ManyToOne(() => User, (user) => user.notes, { onDelete: "CASCADE" })
+	@Index()
+	user: User;
 
-  @Column({ nullable: true })
-  title?: string;
+	@Column({ nullable: true })
+	title?: string;
 
-  @Column('text', { nullable: true })
-  content?: string;
+	@Column("text", { nullable: true })
+	content?: string;
 
-  @Column({ nullable: true })
-  parentId?: number;
+	@Column({ nullable: true })
+	parentId?: number | null;
 
-  @ManyToOne(() => Note, (note) => note.children, {
-    onDelete: 'CASCADE',
-    nullable: true,
-  })
-  @Index()
-  parent?: Note;
+	@Column({
+		nullable: false,
+		default: false,
+	})
+	isArchived: boolean;
 
-  @OneToMany(() => Note, (note) => note.parent)
-  children?: Note[];
+	@ManyToOne(() => Note, (note) => note.children, {
+		onDelete: "CASCADE",
+		nullable: true,
+	})
+	@Index()
+	parent?: Note;
 
-  @CreateDateColumn()
-  @Index()
-  createdAt: Date;
+	@OneToMany(() => Note, (note) => note.parent)
+	children?: Note[];
 
-  @UpdateDateColumn()
-  updatedAt: Date;
+	@CreateDateColumn()
+	@Index()
+	createdAt: Date;
+
+	@UpdateDateColumn()
+	updatedAt: Date;
 }
