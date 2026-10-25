@@ -2,10 +2,24 @@ import { Router, Request, Response } from 'express';
 import datasource from '../../datasource';
 import { Note } from './note.entity';
 import { Auth } from '../../lib/auth';
-import { IsNull } from 'typeorm';
+import { In, IsNull } from 'typeorm';
 
 const noteController = Router();
 const noteRepository = datasource.getRepository(Note);
+
+// 指定したノートの子孫（子・孫・ひ孫…）の id をすべて集める
+const findDescendantIds = async (parentId: number): Promise<number[]> => {
+  const children = await noteRepository.find({
+    where: { parentId },
+    select: { id: true },
+  });
+  const childIds = children.map((child) => child.id);
+  // 子それぞれについて、さらにその子孫を集める（再帰）
+  const grandchildIds = await Promise.all(
+    childIds.map((childId) => findDescendantIds(childId))
+  );
+  return childIds.concat(...grandchildIds);
+};
 
 // ノート一覧取得・検索
 noteController.get('/', Auth, async (req: Request, res: Response) => {
@@ -21,6 +35,7 @@ noteController.get('/', Auth, async (req: Request, res: Response) => {
       const queryBuilder = noteRepository
         .createQueryBuilder('note')
         .where('note.userId = :userId', { userId })
+        .andWhere('note.isArchived = :isArchived', { isArchived: false })
         .andWhere(
           '(LOWER(note.title) LIKE :keyword OR LOWER(note.content) LIKE :keyword)',
           { keyword: `%${keyword.toLowerCase()}%` }
@@ -38,14 +53,14 @@ noteController.get('/', Auth, async (req: Request, res: Response) => {
     else if (parentIdParam !== undefined) {
       const parentId = parseInt(parentIdParam);
       notes = await noteRepository.find({
-        where: { userId, parentId },
+        where: { userId, parentId, isArchived: false },
         order: { createdAt: 'DESC' },
       });
     }
     // Case 3: 両方なし → ルートノート取得
     else {
       notes = await noteRepository.find({
-        where: { userId, parentId: IsNull() },
+        where: { userId, parentId: IsNull(), isArchived: false },
         order: { createdAt: 'DESC' },
       });
     }
@@ -53,6 +68,24 @@ noteController.get('/', Auth, async (req: Request, res: Response) => {
     res.status(200).json({ notes });
   } catch (error) {
     console.error('ノート一覧取得エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました' });
+  }
+});
+
+// ゴミ箱のノート一覧取得
+// ※ '/:id' より上に書く（下に書くと 'trash' が :id として扱われてしまう）
+noteController.get('/trash', Auth, async (req: Request, res: Response) => {
+  try {
+    const userId = req.currentUser!.id;
+
+    const notes = await noteRepository.find({
+      where: { userId, isArchived: true },
+      order: { updatedAt: 'DESC' },
+    });
+
+    res.status(200).json({ notes });
+  } catch (error) {
+    console.error('ゴミ箱一覧取得エラー:', error);
     res.status(500).json({ message: 'サーバーエラーが発生しました' });
   }
 });
@@ -144,6 +177,81 @@ noteController.patch('/:id', Auth, async (req: Request, res: Response) => {
     res.status(200).json(updatedNote);
   } catch (error) {
     console.error('ノート更新エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました' });
+  }
+});
+
+// ノートをゴミ箱に移動（子孫ノートも一緒に移動）
+noteController.patch('/:id/archive', Auth, async (req: Request, res: Response) => {
+  try {
+    const userId = req.currentUser!.id;
+    const noteId = parseInt(req.params.id);
+
+    // ノート存在確認と所有者チェック
+    const note = await noteRepository.findOne({
+      where: { id: noteId, userId },
+    });
+
+    if (!note) {
+      res.status(404).json({ message: 'ノートが見つかりません' });
+      return;
+    }
+
+    // 自分と子孫をまとめてゴミ箱へ
+    const descendantIds = await findDescendantIds(noteId);
+    await noteRepository.update(
+      { id: In([noteId, ...descendantIds]) },
+      { isArchived: true }
+    );
+
+    res.status(200).json({ message: 'ノートをゴミ箱に移動しました' });
+  } catch (error) {
+    console.error('ノートアーカイブエラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました' });
+  }
+});
+
+// ノートをゴミ箱から復元（子孫ノートも一緒に復元）
+noteController.patch('/:id/restore', Auth, async (req: Request, res: Response) => {
+  try {
+    const userId = req.currentUser!.id;
+    const noteId = parseInt(req.params.id);
+
+    // ノート存在確認と所有者チェック
+    const note = await noteRepository.findOne({
+      where: { id: noteId, userId },
+    });
+
+    if (!note) {
+      res.status(404).json({ message: 'ノートが見つかりません' });
+      return;
+    }
+
+    // 自分と子孫をまとめて復元
+    const descendantIds = await findDescendantIds(noteId);
+    await noteRepository.update(
+      { id: In([noteId, ...descendantIds]) },
+      { isArchived: false }
+    );
+
+    // 親ノートがまだゴミ箱にある場合は、一番上の階層に移動して復元する
+    if (note.parentId != null) {
+      const parentNote = await noteRepository.findOne({
+        where: { id: note.parentId },
+      });
+      if (parentNote?.isArchived) {
+        await noteRepository.update({ id: noteId }, { parentId: null });
+      }
+    }
+
+    // 復元後のノートを返す（フロントでサイドバーに戻すために使う）
+    const restoredNote = await noteRepository.findOne({
+      where: { id: noteId },
+    });
+
+    res.status(200).json(restoredNote);
+  } catch (error) {
+    console.error('ノート復元エラー:', error);
     res.status(500).json({ message: 'サーバーエラーが発生しました' });
   }
 });

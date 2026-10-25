@@ -1,3 +1,5 @@
+// .env を DataSource の生成より先に読み込む（Render では環境変数が直接設定されるため影響なし）
+import 'dotenv/config';
 import { DataSource } from 'typeorm';
 
 export default new DataSource({
