@@ -37,6 +37,12 @@ export class Note {
 	})
 	isArchived: boolean;
 
+	@Column({
+		nullable: false,
+		default: false,
+	})
+	isFavorite: boolean;
+
 	@ManyToOne(() => Note, (note) => note.children, {
 		onDelete: "CASCADE",
 		nullable: true,
