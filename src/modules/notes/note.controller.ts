@@ -90,6 +90,25 @@ noteController.get('/trash', Auth, async (req: Request, res: Response) => {
   }
 });
 
+// お気に入りのノート一覧取得
+// ※ '/trash' と同じく、'/:id' より上に書く
+noteController.get('/favorites', Auth, async (req: Request, res: Response) => {
+  try {
+    const userId = req.currentUser!.id;
+
+    // ゴミ箱のノートは含めない（ゴミ箱に入れると isFavorite は false になるが、念のため）
+    const notes = await noteRepository.find({
+      where: { userId, isFavorite: true, isArchived: false },
+      order: { createdAt: 'DESC' },
+    });
+
+    res.status(200).json({ notes });
+  } catch (error) {
+    console.error('お気に入り一覧取得エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました' });
+  }
+});
+
 // ノート詳細取得
 noteController.get('/:id', Auth, async (req: Request, res: Response) => {
   try {
@@ -201,7 +220,7 @@ noteController.patch('/:id/archive', Auth, async (req: Request, res: Response) =
     const descendantIds = await findDescendantIds(noteId);
     await noteRepository.update(
       { id: In([noteId, ...descendantIds]) },
-      { isArchived: true }
+      { isArchived: true, isFavorite: false } // ゴミ箱に入れたら、お気に入りも外す
     );
 
     res.status(200).json({ message: 'ノートをゴミ箱に移動しました' });
@@ -211,12 +230,52 @@ noteController.patch('/:id/archive', Auth, async (req: Request, res: Response) =
   }
 });
 
+// お気に入りの追加・解除で共通の処理（isFavorite に入れる値だけが違う）
+const setFavorite = async (req: Request, res: Response, isFavorite: boolean) => {
+  try {
+    const userId = req.currentUser!.id;
+    const noteId = parseInt(req.params.id);
+
+    // ノート存在確認と所有者チェック
+    const note = await noteRepository.findOne({
+      where: { id: noteId, userId },
+    });
+
+    if (!note) {
+      res.status(404).json({ message: 'ノートが見つかりません' });
+      return;
+    }
+
+    await noteRepository.update({ id: noteId }, { isFavorite });
+
+    // 更新後のノートを返す（フロントで noteStore を更新するために使う）
+    const updatedNote = await noteRepository.findOne({
+      where: { id: noteId },
+    });
+
+    res.status(200).json(updatedNote);
+  } catch (error) {
+    console.error('お気に入り更新エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました' });
+  }
+};
+
+// お気に入りに追加
+noteController.patch('/:id/favorite', Auth, (req: Request, res: Response) =>
+  setFavorite(req, res, true)
+);
+
+// お気に入りから外す
+noteController.patch('/:id/unfavorite', Auth, (req: Request, res: Response) =>
+  setFavorite(req, res, false)
+);
+
 // ノートをゴミ箱から復元（子孫ノートも一緒に復元）
 noteController.patch('/:id/restore', Auth, async (req: Request, res: Response) => {
   try {
     const userId = req.currentUser!.id;
     const noteId = parseInt(req.params.id);
-
+ 
     // ノート存在確認と所有者チェック
     const note = await noteRepository.findOne({
       where: { id: noteId, userId },
