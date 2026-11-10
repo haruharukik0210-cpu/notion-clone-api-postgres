@@ -43,6 +43,11 @@ export class Note {
 	})
 	isFavorite: boolean;
 
+	// アイコン（絵文字）。ないときは null
+	// 型が string | null のときは、TypeORM が列の型を推測できないので type を明示する
+	@Column({ type: "varchar", nullable: true })
+	icon?: string | null;
+
 	@ManyToOne(() => Note, (note) => note.children, {
 		onDelete: "CASCADE",
 		nullable: true,
