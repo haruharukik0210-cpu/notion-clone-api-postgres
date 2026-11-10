@@ -168,7 +168,18 @@ noteController.patch('/:id', Auth, async (req: Request, res: Response) => {
   try {
     const userId = req.currentUser!.id;
     const noteId = parseInt(req.params.id);
-    const { title, content } = req.body;
+    const { title, content, icon } = req.body;
+
+    // icon は「送らない（undefined）／文字列／null」のどれか。それ以外や長すぎる文字列ははじく
+    // （家族の絵文字などは複数の文字の組み合わせなので、少し余裕をもたせて 32 文字まで）
+    if (
+      icon !== undefined &&
+      icon !== null &&
+      (typeof icon !== 'string' || icon.length > 32)
+    ) {
+      res.status(400).json({ message: 'アイコンの値が正しくありません' });
+      return;
+    }
 
     // ノート存在確認と所有者チェック
     const note = await noteRepository.findOne({
@@ -184,6 +195,8 @@ noteController.patch('/:id', Auth, async (req: Request, res: Response) => {
     const updateData: any = {};
     if (title !== undefined) updateData.title = title;
     if (content !== undefined) updateData.content = content;
+    // null も undefined ではないので更新される（＝アイコンを消す）
+    if (icon !== undefined) updateData.icon = icon;
 
     // 更新
     await noteRepository.update({ id: noteId }, updateData);
