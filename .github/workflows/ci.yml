@@ -1,0 +1,31 @@
+# CI（GitHub Actions）の設定ファイル
+# PR を作ったとき・master にプッシュしたときに、GitHub のサーバーで自動チェックする
+# API には Lint がないので、型チェック＋ビルド（npm run build = tsc）だけを行う
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  check:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. リポジトリのコードを取ってくる
+      - uses: actions/checkout@v5
+
+      # 2. Node.js を入れる（バージョンは .nvmrc に合わせる。Render も .nvmrc を読む）
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # 3. package-lock.json どおりにライブラリを入れる
+      - run: npm ci
+
+      # 4. 型チェック＋ビルド（TypeScript → JavaScript。型エラーがあると失敗）
+      - run: npm run build
