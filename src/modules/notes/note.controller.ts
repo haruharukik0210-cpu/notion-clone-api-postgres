@@ -54,14 +54,15 @@ noteController.get('/', Auth, async (req: Request, res: Response) => {
       const parentId = parseInt(parentIdParam);
       notes = await noteRepository.find({
         where: { userId, parentId, isArchived: false },
-        order: { createdAt: 'DESC' },
+        // 並び順（position）の小さい順。同じ番号なら古い順（id の小さい順）
+        order: { position: 'ASC', id: 'ASC' },
       });
     }
     // Case 3: 両方なし → ルートノート取得
     else {
       notes = await noteRepository.find({
         where: { userId, parentId: IsNull(), isArchived: false },
-        order: { createdAt: 'DESC' },
+        order: { position: 'ASC', id: 'ASC' },
       });
     }
 
@@ -148,17 +149,81 @@ noteController.post('/', Auth, async (req: Request, res: Response) => {
       }
     }
 
+    // 新しいノートは、同じ親の中で一番下に置く（今ある一番大きい position ＋1）
+    const { maxPosition } = await noteRepository
+      .createQueryBuilder('note')
+      .select('MAX(note.position)', 'maxPosition')
+      .where('note.userId = :userId', { userId })
+      .andWhere(
+        parentId != null ? 'note.parentId = :parentId' : 'note.parentId IS NULL',
+        { parentId }
+      )
+      .getRawOne();
+    // まだ1件もないときは MAX が null になるので、-1 として扱う → 0 番になる
+    const position = (maxPosition ?? -1) + 1;
+
     // ノート作成
     const note = await noteRepository.save({
       userId,
       title: title || null,
       content: content || null,
       parentId: parentId || null,
+      position,
     });
 
     res.status(201).json(note);
   } catch (error) {
     console.error('ノート作成エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました' });
+  }
+});
+
+// ノートの並び替え
+// 並び替えたあとの id の順番（例：{ ids: [3, 1, 2] }）を受け取って、その順に position を 0, 1, 2 … と振り直す
+// ※ '/:id' より前に書く。後ろに書くと、'/reorder' の "reorder" が :id として扱われてしまう
+noteController.patch('/reorder', Auth, async (req: Request, res: Response) => {
+  try {
+    const userId = req.currentUser!.id;
+    const { ids } = req.body;
+
+    // ids は「数字の配列」で、空でなく、同じ id が重複していないこと
+    if (
+      !Array.isArray(ids) ||
+      ids.length === 0 ||
+      !ids.every((id) => Number.isInteger(id)) ||
+      new Set(ids).size !== ids.length
+    ) {
+      res.status(400).json({ message: '並び替えの値が正しくありません' });
+      return;
+    }
+
+    // 全部が自分のノートで、同じ親の下にあることを確かめる
+    const notes = await noteRepository.find({ where: { id: In(ids), userId } });
+    if (notes.length !== ids.length) {
+      res.status(404).json({ message: 'ノートが見つかりません' });
+      return;
+    }
+    const parentIds = new Set(notes.map((note) => note.parentId ?? null));
+    if (parentIds.size !== 1) {
+      res.status(400).json({ message: '同じ階層のノートだけ並び替えられます' });
+      return;
+    }
+
+    // まとめて更新する。途中で失敗したら、全部なかったことにする（トランザクション）
+    await datasource.transaction(async (manager) => {
+      for (const [index, id] of ids.entries()) {
+        await manager.update(Note, { id, userId }, { position: index });
+      }
+    });
+
+    // 更新後のノートを、新しい順番で返す
+    const updatedNotes = await noteRepository.find({
+      where: { id: In(ids), userId },
+      order: { position: 'ASC' },
+    });
+    res.status(200).json({ notes: updatedNotes });
+  } catch (error) {
+    console.error('ノート並び替えエラー:', error);
     res.status(500).json({ message: 'サーバーエラーが発生しました' });
   }
 });
