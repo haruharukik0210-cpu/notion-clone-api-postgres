@@ -48,6 +48,10 @@ export class Note {
 	@Column({ type: "varchar", nullable: true })
 	icon?: string | null;
 
+	// 並び順。同じ親の中で 0, 1, 2 … と小さい順に並べる（親が違えば、また 0 から数える）
+	@Column({ type: "integer", default: 0 })
+	position: number;
+
 	@ManyToOne(() => Note, (note) => note.children, {
 		onDelete: "CASCADE",
 		nullable: true,
