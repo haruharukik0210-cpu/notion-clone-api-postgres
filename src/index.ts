@@ -13,6 +13,10 @@ const MAX_PORT_ATTEMPTS = 10;
 const app: Express = express();
 const httpServer = createServer(app);
 
+// Render はプロキシ（中継サーバー）の後ろで動くので、1つ手前の IP を「アクセスした人の IP」として扱う
+// （回数制限 express-rate-limit が、人ごとに数えられるようにするため）
+app.set('trust proxy', 1);
+
 // JSONミドルウェアの設定
 app.use(express.json());
 app.use(cors());
