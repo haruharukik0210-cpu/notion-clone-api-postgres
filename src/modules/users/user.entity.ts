@@ -24,6 +24,10 @@ export class User {
   @Column()
   password: string;
 
+  // お試し用のゲストなら true。24時間たったら削除される
+  @Column({ default: false })
+  isGuest: boolean;
+
   @OneToMany(() => Note, (note) => note.user)
   notes: Note[];
 

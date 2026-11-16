@@ -3,6 +3,11 @@ import datasource from '../../datasource';
 import { User } from '../users/user.entity';
 import { compare, hash } from 'bcryptjs';
 import { encodeJwt } from '../../lib/jwt';
+import { randomUUID } from 'crypto';
+import { LessThan, EntityManager } from 'typeorm';
+import { rateLimit } from 'express-rate-limit';
+import { Note } from '../notes/note.entity';
+import { guestSampleNotes, SampleNote, toContent } from './guest-sample-notes';
 
 const authController = Router();
 const userRepository = datasource.getRepository(User);
@@ -100,6 +105,76 @@ authController.post('/signin', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('ログインエラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました' });
+  }
+});
+
+// ゲストは作ってから 24 時間で削除する
+const GUEST_LIFETIME_MS = 24 * 60 * 60 * 1000;
+
+// ゲストの作りすぎを防ぐ：同じ IP からは 1 時間に 10 回まで
+const guestLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { message: 'しばらく時間をおいてから、もう一度お試しください' },
+});
+
+// サンプルのノートを、親 → 子の順に作る。position は同じ親の中で 0, 1, 2 …
+const createSampleNotes = async (
+  manager: EntityManager,
+  userId: string,
+  samples: SampleNote[],
+  parentId: number | null,
+) => {
+  for (const [index, sample] of samples.entries()) {
+    const note = await manager.save(Note, {
+      userId,
+      parentId,
+      title: sample.title,
+      icon: sample.icon,
+      content: toContent(sample.blocks),
+      position: index,
+    });
+    if (sample.children) {
+      await createSampleNotes(manager, userId, sample.children, note.id);
+    }
+  }
+};
+
+// お試し用のゲストを作ってログインする
+authController.post('/guest', guestLimiter, async (_req: Request, res: Response) => {
+  try {
+    const user = await datasource.transaction(async (manager) => {
+      // ① 24 時間より前に作られたゲストを削除する（ノートは ON DELETE CASCADE で一緒に消える）
+      //    isGuest = true のユーザーだけが対象。本物のユーザーは消さない
+      await manager.delete(User, {
+        isGuest: true,
+        createdAt: LessThan(new Date(Date.now() - GUEST_LIFETIME_MS)),
+      });
+
+      // ② 新しいゲストを作る。メールアドレスもパスワードもランダムで、誰も知らない
+      const guest = await manager.save(User, {
+        name: 'ゲスト',
+        email: `guest-${randomUUID()}@guest.local`,
+        password: await hash(randomUUID(), 10),
+        isGuest: true,
+      });
+
+      // ③ サンプルのノートを入れる
+      await createSampleNotes(manager, guest.id, guestSampleNotes, null);
+
+      return guest;
+    });
+
+    // ④ ログインと同じ形で返す（フロントはログイン後の処理を共通にできる）
+    res.status(200).json({
+      user: { ...user, password: undefined },
+      token: encodeJwt(user.id),
+    });
+  } catch (error) {
+    console.error('ゲスト作成エラー:', error);
     res.status(500).json({ message: 'サーバーエラーが発生しました' });
   }
 });
