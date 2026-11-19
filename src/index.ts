@@ -2,6 +2,7 @@ import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import setCurrentUser from './middleware/set-current-user';
+import errorHandler from './middleware/error-handler';
 import authController from './modules/auth/auth.controller';
 import noteController from './modules/notes/note.controller';
 import datasource from './datasource';
@@ -32,6 +33,9 @@ app.use('/notes', noteController);
 app.get('/', (req: Request, res: Response) => {
   res.send('hello world');
 });
+
+// 想定外のエラーを JSON の 500 で返す（ルートの登録より「あと」に置く。順番に通るので、最後に受け止める）
+app.use(errorHandler);
 
 // ポートが使用可能かチェックする関数
 function checkPort(port: number): Promise<boolean> {
