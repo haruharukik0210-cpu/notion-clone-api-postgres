@@ -2,3 +2,5 @@ node_modules
 trello-clone.sqlite
 uploads/*
 .env
+# ビルドの出力（npm run build で作られる。Render は自分でビルドするので、リポジトリには入れない）
+dist
